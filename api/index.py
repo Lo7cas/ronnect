@@ -5,7 +5,6 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
-PUBLIC_KEY = os.getenv("PUBLIC_DISCORD_KEY")
 ROBLOX_ACCESS_KEY = os.getenv("ROBLOX_ACCESS_KEY")
 GUILD_ID = os.getenv("GUILD_ID")
 
@@ -25,7 +24,7 @@ def get_discord_user_by_nickname(name):
 @app.route('/roblox', methods=['POST'])
 def handle_roblox():
     data = request.json
-    if data.get("key") != ROBLOX_ACCESS_KEY:
+    if not data or data.get("key") != ROBLOX_ACCESS_KEY:
         return jsonify({"error": "Unauthorized"}), 401
 
     action = data.get("action")
@@ -34,10 +33,15 @@ def handle_roblox():
 
     user_id = get_discord_user_by_nickname(player_name)
     if not user_id:
-        return jsonify({"error": "User not found"}), 404
+        return jsonify({"error": f"User {player_name} not found on Discord"}), 404
 
     headers = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
-    channels = requests.get(f"https://discord.com/api/v10/guilds/{GUILD_ID}/channels", headers=headers).json()
+    
+    channels_res = requests.get(f"https://discord.com/api/v10/guilds/{GUILD_ID}/channels", headers=headers)
+    if channels_res.status_code != 200:
+        return jsonify({"error": "Could not fetch Discord channels"}), 500
+        
+    channels = channels_res.json()
     target_channel = next((c for c in channels if c['name'] == server_id), None)
 
     if action == "player_added":
