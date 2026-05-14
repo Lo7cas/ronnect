@@ -1,59 +1,73 @@
 import os
-from flask import Flask, request, jsonify
 import requests
-from discord_interactions import verify_key
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-PUBLIC_KEY = os.getenv("PUBLIC_DISCORD_KEY")
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
+PUBLIC_KEY = os.getenv("PUBLIC_DISCORD_KEY")
 ROBLOX_ACCESS_KEY = os.getenv("ROBLOX_ACCESS_KEY")
+GUILD_ID = os.getenv("GUILD_ID")
 
-@app.route('/', methods=['POST'])
-def interactions():
-    signature = request.headers.get('X-Signature-Ed25519')
-    timestamp = request.headers.get('X-Signature-Timestamp')
-    body = request.data.decode('utf-8')
-
-    if not verify_key(body, signature, timestamp, PUBLIC_KEY):
-        return 'invalid request signature', 401
-
-    data = request.json
-    if data.get('type') == 1:
-        return jsonify({'type': 1})
-    
-    return jsonify({
-        'type': 4,
-        'data': {'content': 'Ronnect ist online!'}
-    })
+def get_discord_user_by_nickname(name):
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+    response = requests.get(
+        f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/search?query={name}",
+        headers=headers
+    )
+    if response.status_code == 200:
+        members = response.json()
+        for member in members:
+            if member.get('nick') == name or member['user']['username'] == name:
+                return member['user']['id']
+    return None
 
 @app.route('/roblox', methods=['POST'])
-def from_roblox():
+def handle_roblox():
     data = request.json
-    
-    incoming_key = data.get("key")
-    if incoming_key != ROBLOX_ACCESS_KEY:
+    if data.get("key") != ROBLOX_ACCESS_KEY:
         return jsonify({"error": "Unauthorized"}), 401
 
-    channel_id = data.get("channel_id")
-    message = data.get("message")
-    
-    if not channel_id or not message:
-        return jsonify({"error": "Missing data"}), 400
+    action = data.get("action")
+    player_name = data.get("player_name")
+    server_id = data.get("server_id").lower()
 
-    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-    headers = {
-        "Authorization": f"Bot {BOT_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {"content": message}
+    user_id = get_discord_user_by_nickname(player_name)
+    if not user_id:
+        return jsonify({"error": "User not found"}), 404
 
-    response = requests.post(url, headers=headers, json=payload)
+    headers = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
+    channels = requests.get(f"https://discord.com/api/v10/guilds/{GUILD_ID}/channels", headers=headers).json()
+    target_channel = next((c for c in channels if c['name'] == server_id), None)
 
-    if response.status_code == 200:
-        return jsonify({"status": "success"}), 200
-    else:
-        return jsonify({"error": "Discord API error", "details": response.text}), 500
+    if action == "player_added":
+        if not target_channel:
+            payload = {
+                "name": server_id,
+                "type": 0,
+                "permission_overwrites": [
+                    {"id": GUILD_ID, "deny": "1024"},
+                    {"id": user_id, "allow": "1024"}
+                ]
+            }
+            requests.post(f"https://discord.com/api/v10/guilds/{GUILD_ID}/channels", headers=headers, json=payload)
+        else:
+            requests.put(
+                f"https://discord.com/api/v10/channels/{target_channel['id']}/permissions/{user_id}",
+                headers=headers,
+                json={"allow": "1024", "type": 1}
+            )
 
-if __name__ == '__main__':
-    app.run(debug = True)
+    elif action == "player_removing":
+        if target_channel:
+            requests.delete(f"https://discord.com/api/v10/channels/{target_channel['id']}/permissions/{user_id}", headers=headers)
+            
+            updated_channel = requests.get(f"https://discord.com/api/v10/channels/{target_channel['id']}", headers=headers).json()
+            overwrites = updated_channel.get("permission_overwrites", [])
+            
+            user_overwrites = [o for o in overwrites if o['id'] != GUILD_ID and o['type'] == 1]
+            
+            if len(user_overwrites) == 0:
+                requests.delete(f"https://discord.com/api/v10/channels/{target_channel['id']}", headers=headers)
+
+    return jsonify({"status": "ok"})
