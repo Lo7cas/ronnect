@@ -7,6 +7,7 @@ app = Flask(__name__)
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 ROBLOX_ACCESS_KEY = os.getenv("ROBLOX_ACCESS_KEY")
 GUILD_ID = os.getenv("GUILD_ID")
+ROLE_ID = "1504516473127702539" # Moderators
 
 def get_discord_user_by_nickname(name):
     headers = {"Authorization": f"Bot {BOT_TOKEN}"}
@@ -56,7 +57,8 @@ def handle_roblox():
                 "type": 0,
                 "permission_overwrites": [
                     {"id": GUILD_ID, "deny": "1024"},
-                    {"id": user_id, "allow": "1024"}
+                    {"id": user_id, "allow": "1024"},
+                    {"id": ROLE_ID, "type": 0, "allow": "1024"}
                 ]
             }
             res = requests.post(f"https://discord.com/api/v10/guilds/{GUILD_ID}/channels", headers=headers, json=payload)
